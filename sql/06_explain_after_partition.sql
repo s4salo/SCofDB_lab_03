@@ -4,27 +4,74 @@
 SET max_parallel_workers_per_gather = 0;
 SET work_mem = '32MB';
 
--- TODO:
--- Выполните ANALYZE для партиционированной таблицы/таблиц
--- Пример:
--- ANALYZE orders;
+ANALYZE orders_partitioned;
 
 -- ============================================
--- TODO:
--- Скопируйте сюда те же запросы, что в:
---   02_explain_before.sql
---   04_explain_after_indexes.sql
--- и выполните EXPLAIN (ANALYZE, BUFFERS) после партиционирования.
+-- Те же запросы, что в 02 и 04, но теперь на orders_partitioned.
 -- ============================================
 
-\echo '--- Q1 ---'
--- TODO: EXPLAIN (ANALYZE, BUFFERS) ...
+\timing on
+\echo '=== AFTER INDEXES ==='
 
-\echo '--- Q2 ---'
--- TODO: EXPLAIN (ANALYZE, BUFFERS) ...
+SET max_parallel_workers_per_gather = 0;
+SET work_mem = '32MB';
+ANALYZE;
 
-\echo '--- Q3 ---'
--- TODO: EXPLAIN (ANALYZE, BUFFERS) ...
+-- ============================================
+-- Q1: Фильтрация по статусу + сортировка по дате
+-- ============================================
+\echo '--- Q1: Фильтрация по статусу + сортировка по дате ---'
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT o.id, o.user_id, o.status, o.total_amount, o.created_at
+FROM orders o
+WHERE o.status = 'paid'
+ORDER BY o.created_at DESC
+LIMIT 50;
 
--- (Опционально) Q4
--- TODO
+-- ============================================
+-- Q2: Фильтрация по статусу + диапазону дат
+-- ============================================
+\echo '--- Q2: Фильтрация по статусу + диапазону дат ---'
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT o.id, o.user_id, o.total_amount, o.created_at
+FROM orders o
+WHERE o.status = 'paid'
+  AND o.created_at >= '2025-01-01'
+  AND o.created_at <  '2026-01-01';
+
+-- ============================================
+-- Q3: JOIN + GROUP BY
+-- ============================================
+\echo '--- Q3: JOIN + GROUP BY (топ пользователей по выручке) ---'
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT o.user_id,
+       count(DISTINCT o.id)  AS order_count,
+       sum(oi.price * oi.quantity) AS total_spent
+FROM orders o
+JOIN order_items oi ON oi.order_id = o.id
+WHERE o.status IN ('paid', 'completed')
+GROUP BY o.user_id
+ORDER BY total_spent DESC
+LIMIT 20;
+
+-- ============================================
+-- Q4: Заказы в статусе "paid" которые долго не становятся "shipped"
+-- ============================================
+\echo '--- Q4: Заказы в статусе "paid" которые долго не становятся "shipped" '
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT o.id, o.user_id, o.total_amount, o.created_at,
+       (SELECT changed_at FROM order_status_history osh
+        WHERE osh.order_id = o.id AND osh.status = 'paid'
+        ORDER BY changed_at DESC LIMIT 1) as paid_at
+FROM orders o
+WHERE o.status = 'paid'
+  AND EXISTS (
+    SELECT 1 FROM order_status_history osh
+    WHERE osh.order_id = o.id AND osh.status = 'paid'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM order_status_history osh
+    WHERE osh.order_id = o.id AND osh.status = 'shipped'
+  )
+  AND o.created_at < NOW() - INTERVAL '1 day'
+ORDER BY o.created_at;
