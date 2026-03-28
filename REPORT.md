@@ -89,7 +89,7 @@ LIMIT 10;
 - GroupAggregate
 - Sort (external merge, диск)
 
-**Execution Time:** ~1285 ms  
+**Execution Time:** ~1728 ms  
 
 **Почему медленный:**
 Обработка сотен тысяч строк, тяжёлая агрегация и сортировка с использованием диска.
